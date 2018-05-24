@@ -71,10 +71,3 @@ class ClearMrfLog:
                 time.sleep(2)
             elif i == 1:
                 print('top cleared successfully')
-            m.sendline('cat /dev/null > top.txt')
-            i=m.expect([pexpect.EOF, '#'])
-            if i == 0:
-                print('top clearing failed!!!')
-                time.sleep(2)
-            elif i == 1:
-                print('top cleared successfully')

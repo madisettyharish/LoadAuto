@@ -11,9 +11,11 @@ import pexpect
 import topProcess
 import config
 
+from SNMPLib import SNMPLib
 from MSConfig import MSConfig
 
 objMSConfig = MSConfig()
+snmpobj = SNMPLib()
 
 class mainProgram:
 
@@ -25,11 +27,12 @@ class mainProgram:
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         fh.setFormatter(formatter)
         self.logger.addHandler(fh)
-        con=logging.StreamHandler(sys.stdout,)
+        con = logging.StreamHandler(sys.stdout,)
         con.setFormatter(formatter)
         self.logger.addHandler(con)
         self.loadName = config.loadDetails['loadName']
         self.logPath = os.popen("pwd").read().strip('\n')+"/"+self.loadName
+        os.system('rm -rf %s' %(self.logPath))
         self.currentPath = os.system("mkdir -p %s"%(self.logPath))
         self.logger.debug("Entering Config.py ")
         #os.system("cp /tmp/config.py %s"%(self.logPath))
@@ -49,11 +52,12 @@ class mainProgram:
                 self.logger.error("SWMRF is unreachable ")
                 sys.exit()
             else:
-                self.logger.debug("SWMRF is Up and Running ")
+                self.logger.debug("SWMRF is UP and Running ")
 
     def startSAT(self):
         SipAutoTesterObj = SipAutoTester.SipAutoTester(self.logPath)
         SipAutoTesterObj.prepareATcfg()
+        SipAutoTesterObj.prepareMscConfig()
         resultSAT = SipAutoTesterObj.startSAT()
         return resultSAT
 
@@ -90,7 +94,7 @@ class mainProgram:
 
         SSH_NEWKEY = r'(?i)are you sure you want to continue connecting \(yes/no\)\?'
         COMMAND_PROMPT = '[#] '
-        child1=pexpect.spawn("scp  %s@%s:/var/log/messages\{,\.*\}  %s"%(self.mrfUserName,self.mrfIp,self.logPath))
+        child1=pexpect.spawn("scp  %s@%s:/var/log/messages\{,\.*\}  %s"%(self.mrfUserName, self.mrfIp, self.logPath))
         iii = child1.expect([pexpect.TIMEOUT, SSH_NEWKEY, '(?i)password', COMMAND_PROMPT, pexpect.EOF])
         if iii == 0:
             print "scp timeout"
@@ -149,12 +153,29 @@ if __name__ == '__main__':
 
     obj = mainProgram()
     objMSConfig.copytopscript()
+    objMSConfig.setsyslog()
 
     def reRun(obj):
 
         objMSConfig.sutresetservice()
         obj.clearMrfLog()
         obj.topThread()
+
+        sleep_time = 5
+        while sleep_time == 30:
+            time.sleep(sleep_time)
+            curPorts = snmpobj.snmpget('cardstatCurrPortsActive.1')
+            if curPorts == "0":
+                break
+            else:
+                print "There are Active/Hanging ports... waiting for to get cleared. "
+                sleep_time = sleep_time + 5
+
+        curPorts = snmpobj.snmpget('cardstatCurrPortsActive.1')
+        if not curPorts == "0":
+            objMSConfig.sutreboot()
+            reRun(obj)
+
         resultSAT = obj.startSAT()
         print "SAT Result = " + str(resultSAT)
         if resultSAT:
@@ -162,6 +183,7 @@ if __name__ == '__main__':
         else:
             print "Going for reRun"
             reRun(obj)
+
     print "Load Execution Started... "
     reRun(obj)
     obj.copyLogs()
