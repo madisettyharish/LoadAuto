@@ -34,11 +34,11 @@ class MSConfig:
         else:
             print "SUT has " + audiocores + " cores... "
 
-    # Load should be running during
+    # Load should be running during this fun call
     def refactorcores(self, achievedports='1000', videoload = False, confload = False):
 
-        loggerlocal.debug("Evaluating whether core refactoring is necessary based on the achieved ports %s" \
-                          %(achievedports))
+        loggerlocal.debug(
+            "Evaluating whether core refactoring is necessary based on the achieved ports %s" %(achievedports))
         if int(achievedports) > 1000:
             loggerlocal.debug("Achieved ports are more thank 1000, core refactoring is in progress... ")
             print "Number of achieved ports are more than 1000, refactoring SUT cores"
@@ -109,7 +109,7 @@ class MSConfig:
         snmpobj.snmpset('nodeReboot.0', '1', 'i')
         reboot = True
         sleeptime = 300
-        while not reboot:
+        while reboot:
             time.sleep(sleeptime)
             if snmpobj.snmpget('comSetServiceMode.1.2') != "inServiceMode":
                 loggerlocal.debug("Waiting for SUT to come UP")
@@ -140,3 +140,54 @@ class MSConfig:
             # print("In scp 2....")
         elif iii == 3:
             pass
+
+    def eval_local_pexpect(self, con):
+
+        COMMAND_PROMPT = '[#] '
+        SSH_NEWKEY = r'(?i)are you sure you want to continue connecting \(yes/no\)\?'
+        i = con.expect([pexpect.TIMEOUT, COMMAND_PROMPT, SSH_NEWKEY, '(?i)password', pexpect.EOF], timeout=120)
+        if i == 0:
+            print "***ERROR pexpect timeout. "
+            return False
+        elif i == 1:
+            # print "Received command prompt"
+            pass
+        elif i == 2:
+            con.sendline('yes')
+            first = self.eval_local_pexpect(con)
+            con.sendline('%s' %(self.mrfPassword))
+            first = self.eval_local_pexpect(con)
+        elif i == 3:
+            con.sendline('%s' %(self.mrfPassword))
+            first = self.eval_local_pexpect(con)
+        else:
+            print "There is some issue in the pexpect, Please check"
+            return False
+        return True
+
+    def is_syslogerror(self):
+
+        listoferror = ['EN_MM_RS_OUT_OF_DSP_CPU', 'Error opening clip', 'ACK contains no SDP is un-expected', ': A:',
+                       ': C:', 'EN_SRM_RS_FILE_NOT_FOUND', 'EN_MM_RS_OUT_OF_BANDWIDTH', 'out-of-dsp resources'
+                       ]
+        print "Checking syslog errors... "
+        try:
+            m = pexpect.spawn("ssh %s@%s" % (self.mrfUserName, self.mrfIp))
+        except IOError:
+            print "There is problem in doing SSH. "
+        else:
+            first = self.eval_local_pexpect(m)
+            is_syslog_issue = False
+            for i in range(len(listoferror)):
+                m.sendline("awk '{print}' /var/log/messages| awk '/%s/'| wc -l" % (listoferror[i]))
+                index1 = m.expect(['0', '#'])
+                if index1 == 0:
+                    continue
+                else:
+                    print "There are error logs for " + listoferror[i]
+                    print "***ERROR stoping the execution"
+                    is_syslog_issue = True
+                    break
+            if is_syslog_issue:
+                print "There is some issue in the syslog processing " + str(is_syslog_issue)
+            return is_syslog_issue

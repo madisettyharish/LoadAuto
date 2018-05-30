@@ -1,6 +1,8 @@
 loadDetails={'loadName':'MscmlBasicConferenceModel',
 	'ATFile':'AT_MscmlBasicConferenceModel_ME-850_SWBtoNB.cfg ',
-	'modelCfg':'MscmlBasicConferenceModel.cfg '}
+	'modelCfg':'MscmlBasicConferenceModel.cfg '
+			 loadmodel_data:
+			 }
 swMrfCredentials={'MS_Server_Control_IP':'10.211.0.184',
 	'mrfIp':'10.211.0.184',
 	'mrfUserName':'root',
