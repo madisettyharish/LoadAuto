@@ -20,8 +20,7 @@ class topProcess:
         except IOError:
             print "There is problem in doing SSH. "
         else:
-            print (self.loadDur)
-            m.timeout = int(self.loadDur)
+            m.timeout = 300
             first = m.expect(['password:', SSH_NEWKEY, '#'])
             if first == 0:
                 m.sendline('%s' %(self.mrfPassword))
@@ -45,10 +44,11 @@ class topProcess:
             elif first == 2:
                 print "Connected to SUT to capture TOP "
             print "Running TOP script"
+            m.setwinsize(1000,1000)
             m.sendline('nohup /root/loadtop.sh &')
             i = m.expect([pexpect.EOF, '#', pexpect.TIMEOUT])
             if i == 1:
-                print "Killed top script. "
+                print "Started top script. "
                 m.sendline(" ")
                 m.expect([pexpect.EOF, '#', pexpect.TIMEOUT])
             else:
@@ -63,7 +63,7 @@ class topProcess:
             print "There is problem in doing SSH. "
         else:
             print (self.loadDur)
-            m.timeout = int(self.loadDur)
+            m.timeout = 300
             first = m.expect(['password:', SSH_NEWKEY, '#'])
             if first == 0:
                 m.sendline('%s' %(self.mrfPassword))

@@ -26,9 +26,10 @@ class RTPGenerator:
         print "Replacing TrafficAddress=" + self.rtpgIp + "& SignalPort=" + self.rtpgPort
         con.sendline("sed -i '/TrafficAddress/d' %s/rtpg.cfg" %(self.rtpgPath))
         first = self.eval_local_pexpect(con)
-        con.sendline("sed -i '/SignalPort/d' %s/rtpg.cfg" %(self.rtpgPath))
-        first = self.eval_local_pexpect(con)
         con.sendline('sed -i "\$aTrafficAddress=%s" %s/rtpg.cfg' %(self.rtpgIp, self.rtpgPath))
+        first = self.eval_local_pexpect(con)
+
+        con.sendline("sed -i '/SignalPort/d' %s/rtpg.cfg" %(self.rtpgPath))
         first = self.eval_local_pexpect(con)
         con.sendline('sed -i "\$aSignalPort=%s" %s/rtpg.cfg' %(self.rtpgPort, self.rtpgPath))
         first = self.eval_local_pexpect(con)
@@ -57,6 +58,30 @@ class RTPGenerator:
             return False
         return True
 
+    def eval_local_pexpect_pwd(self, con, password):
+
+        COMMAND_PROMPT = '[#] '
+        SSH_NEWKEY = r'(?i)are you sure you want to continue connecting \(yes/no\)\?'
+        i = con.expect([pexpect.TIMEOUT, COMMAND_PROMPT, SSH_NEWKEY, '(?i)password', pexpect.EOF], timeout=10)
+        if i == 0:
+            print "***ERROR pexpect timeout. "
+            return False
+        elif i == 1:
+            # print "Received command prompt"
+            pass
+        elif i == 2:
+            con.sendline('yes')
+            first = self.eval_local_pexpect(con)
+            con.sendline('%s' %(password))
+            first = self.eval_local_pexpect(con)
+        elif i == 3:
+            con.sendline('%s' %(password))
+            first = self.eval_local_pexpect(con)
+        else:
+            print "There is some issue in the pexpect, Please check"
+            return False
+        return True
+
     def startRTPG(self):
 
         try:
@@ -67,9 +92,6 @@ class RTPGenerator:
             child.timeout = 300
             first = self.eval_local_pexpect(child)
             print child.before
-            child.sendline("fuser -k %s/tcp " %(self.rtpgPort))
-            print child.before
-            first = self.eval_local_pexpect(child)
             self.prepareRtpgCfg(child)
             child.sendline("scp %s/rtpg.cfg ." %(self.rtpgPath))
             first = self.eval_local_pexpect(child)
@@ -80,13 +102,9 @@ class RTPGenerator:
             child.sendline("pwd")
             first = self.eval_local_pexpect(child)
             print child.before
-            #rtpgBin = 'ls ' + self.rtpgPath + '/RtpGenerator_Rel_* | tail -1 | awk -F" " "{print $NF}'
-            #child.sendline('./RtpGenerator_Rel_0427 ')
-
-            print child.before
-            print "Running RTPG start script"
+            print "Killing the RTPG if present & Running new instance... "
             child.timeout = float(self.loadDur)
-            child.sendline('nohup /root/start_rtpg.sh &')
+            child.sendline('nohup /root/start_rtpg.sh %s &' %(self.rtpgPath))
             first = self.eval_local_pexpect(child)
             print child.before
             if first:
@@ -101,7 +119,11 @@ class RTPGenerator:
         except IOError:
             print "there is problem"
         else:
-            child.sendline("fuser -k %s/tcp " % (self.rtpgPort))
+            child.sendline("cat /root/start_rtpg.sh | grep -v '^\$rtpg_bin' > /root/kill_rtpg.sh")
+            first = self.eval_local_pexpect(child)
+            child.sendline("chmod +x /root/kill_rtpg.sh")
+            first = self.eval_local_pexpect(child)
+            child.sendline("nohup /root/kill_rtpg.sh %s &")
             first = self.eval_local_pexpect(child)
             if first:
                 print "RTPG killed Successfully... "
@@ -112,3 +134,12 @@ class RTPGenerator:
 
         print "Collecting pcap for 2 min"
         os.system("nohup /root/start_tcpdump.sh %s %s &" %(self.rtpgIp, self.loadname))
+
+    def transferpcap(self):
+
+        print "Transferring collected pcap ..."
+        #os.system("nohup /root/start_tcpdump.sh %s %s &" % (self.rtpgIp, self.loadname))
+        child1 = pexpect.spawn("scp  %s@%s:/root/%s.pcap  /root/%s/."
+                               % (self.rtpgUserName, self.rtpgIp, self.loadname, self.loadname))
+        first = self.eval_local_pexpect_pwd(child1, self.rtpgPassword)
+        time.sleep(5)

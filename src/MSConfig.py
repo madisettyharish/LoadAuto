@@ -16,6 +16,7 @@ class MSConfig:
         self.mrfIp = config.swMrfCredentials['mrfIp']
         self.mrfUserName = config.swMrfCredentials['mrfUserName']
         self.mrfPassword = config.swMrfCredentials['mrfPassword']
+        self.ignore_user_err = config.ignore_Specific_Errors['ErrorList'].split('=')
 
     def checkmscores(self):
 
@@ -28,6 +29,7 @@ class MSConfig:
                 snmpobj.snmpset('caNumVxmlCores.0', '0', 'u')
                 snmpobj.snmpset('caNumHdEncCores.0', '0', 'u')
                 snmpobj.snmpset('caNumVideoCores.0', str(allocated/2), 'u')
+                self.sutreboot()
             else:
                 print "SUT has less than 4 cores"
                 logging.debug("SUT is having less than 4 MP cores. ")
@@ -125,7 +127,7 @@ class MSConfig:
         print "Copying TOP script"
         SSH_NEWKEY = r'(?i)are you sure you want to continue connecting \(yes/no\)\?'
         COMMAND_PROMPT = '[#] '
-        child1 = pexpect.spawn("scp /home/hmadiset/loadtop.sh %s@%s:/root/. " % (self.mrfUserName, self.mrfIp))
+        child1 = pexpect.spawn("scp /root/DV_Load_Python_Files/loadtop.sh %s@%s:/root/. " % (self.mrfUserName, self.mrfIp))
         iii = child1.expect([pexpect.TIMEOUT, SSH_NEWKEY, '(?i)password', COMMAND_PROMPT, pexpect.EOF])
         if iii == 0:
             print "scp timeout"
@@ -165,12 +167,23 @@ class MSConfig:
             return False
         return True
 
-    def is_syslogerror(self):
+    def syslogcheck(self):
 
-        listoferror = ['EN_MM_RS_OUT_OF_DSP_CPU', 'Error opening clip', 'ACK contains no SDP is un-expected', ': A:',
-                       ': C:', 'EN_SRM_RS_FILE_NOT_FOUND', 'EN_MM_RS_OUT_OF_BANDWIDTH', 'out-of-dsp resources'
-                       ]
-        print "Checking syslog errors... "
+        #listoferror = ['EN_MM_RS_OUT_OF_DSP_CPU', 'Error opening clip', 'ACK contains no SDP is un-expected', ': A:',
+        #              ': C:', 'EN_SRM_RS_FILE_NOT_FOUND', 'EN_MM_RS_OUT_OF_BANDWIDTH', 'out-of-dsp resources'
+        #               ]
+        listoferror = ['Error opening clip', 'ACK contains no SDP is un-expected', ': A:',
+                       ': C:', 'EN_SRM_RS_FILE_NOT_FOUND']
+        listerrignore = ['EN_MM_RS_OUT_OF_DSP_CPU', 'EN_MM_RS_OUT_OF_BANDWIDTH', 'out-of-dsp resources']
+        #user_err_ignore_list = ['EN_MM_RS_OUT_OF_DSP_CPU', 'EN_MM_RS_OUT_OF_BANDWIDTH', 'out-of-dsp resources']
+        user_err_ignore_list = []
+        user_err_ignore_list.extend(self.ignore_user_err)
+        user_err_ignore_list = filter(str.strip, user_err_ignore_list)
+        print user_err_ignore_list
+
+        audiocores = snmpobj.getMSaudiocores()
+        cal_audiocores = int(audiocores) * 3
+
         try:
             m = pexpect.spawn("ssh %s@%s" % (self.mrfUserName, self.mrfIp))
         except IOError:
@@ -178,16 +191,103 @@ class MSConfig:
         else:
             first = self.eval_local_pexpect(m)
             is_syslog_issue = False
+            is_syslog_issue_ignore = False
+            is_user_err_ignore = False
+            print "Calculating Audio Load average ..."
+            m.sendline(
+                "cat /var/log/messages | grep -i \'audio load:\' | tail -%s | awk -F\'Audio Load:\' \'{print $2}\' | awk -F \'(\' \'{print $1}\' | awk \'{sum += $1} {print sum}\'  | tail -1 | awk \'{print $1/%s}\'" % (
+                cal_audiocores, cal_audiocores))
+            index2 = m.expect(['#', pexpect.EOF])
+            avgCapDet = ''
+            if index2 == 0:
+                avgCapDet = m.before.split('\n')[-2]
+                print "The average capacity of the load model calculated from syslog is : " + avgCapDet
+                print m.before
+            else:
+                print "There is some issue in collecting average capacity, please check... "
+                print m.before
+
+            print "Checking syslog errors... "
             for i in range(len(listoferror)):
-                m.sendline("awk '{print}' /var/log/messages| awk '/%s/'| wc -l" % (listoferror[i]))
-                index1 = m.expect(['0', '#'])
+
+
+                m.sendline("grep '%s' /var/log/messages| wc -l" % (listoferror[i]))
+                index1 = m.expect(['#'])
                 if index1 == 0:
-                    continue
+                    findvalue = m.before.split('\n')[-2]
+                    findvalue = int(findvalue)
+                    if findvalue == 0:
+                        print "No " + listoferror[i] + " errors"
+                        continue
+                    else:
+                        print "Yes There are error logs for " + listoferror[i]
+                        m.sendline("grep '%s' /var/log/messages | awk -F'->' '{$1=\"\"; print $0}' |uniq >messages.err"
+                                   %(listoferror[i]))
+                        time.sleep(1)
+                        index11 = m.expect(['#'])
+                        if index11 == 0:
+                            print "uniq messages processed"
+                            pass
+                        else:
+                            print "There is some issue in processing the syslog"
+                        #print "***ERROR in the execution"
+                        is_syslog_issue = True
+                        #if listoferror[i] in listerrignore:
+                        #    is_syslog_issue_ignore = True
                 else:
-                    print "There are error logs for " + listoferror[i]
-                    print "***ERROR stoping the execution"
-                    is_syslog_issue = True
-                    break
+                    print "There is some issue in processing the syslog"
+
+            for i in range(len(listerrignore)):
+                m.sendline("grep '%s' /var/log/messages| wc -l" % (listerrignore[i]))
+                index1 = m.expect(['#'])
+                if index1 == 0:
+                    findvalue = m.before.split('\n')[-2]
+                    findvalue = int(findvalue)
+                    if findvalue == 0:
+                        print "No " + listerrignore[i] + " errors"
+                        continue
+                    else:
+                        print "Yes There are error logs for " + listerrignore[i]
+                        m.sendline("grep '%s' /var/log/messages | awk -F'->' '{$1=\"\"; print $0}' |uniq >>messages.err"
+                                   %(listerrignore[i]))
+                        time.sleep(1)
+                        index11 = m.expect(['#'])
+                        if index11 == 0:
+                            print "uniq messages processed"
+                            pass
+                        else:
+                            print "There is some issue in processing the syslog"
+                        #print "***ERROR in the execution"
+                        is_user_err_ignore = True
+                else:
+                    print "There is some issue in processing the syslog"
+
+            for i in range(len(user_err_ignore_list)):
+                m.sendline("grep '%s' /var/log/messages| wc -l" % (user_err_ignore_list[i]))
+                index1 = m.expect(['#'])
+                if index1 == 0:
+                    findvalue = m.before.split('\n')[-2]
+                    findvalue = int(findvalue)
+                    if findvalue == 0:
+                        print "No " + user_err_ignore_list[i] + " errors"
+                        continue
+                    else:
+                        print "Yes There are error logs for " + user_err_ignore_list[i]
+                        m.sendline("grep '%s' /var/log/messages | awk -F'->' '{$1=\"\"; print $0}' |uniq >>messages.err"
+                                   %(user_err_ignore_list[i]))
+                        time.sleep(1)
+                        index11 = m.expect(['#'])
+                        if index11 == 0:
+                            print "uniq messages processed"
+                            pass
+                        else:
+                            print "There is some issue in processing the syslog"
+                        #print "***ERROR in the execution"
+                        is_user_err_ignore = True
+                else:
+                    print "There is some issue in processing the syslog"
+
+            print "syslog processing completed... "
             if is_syslog_issue:
                 print "There is some issue in the syslog processing " + str(is_syslog_issue)
-            return is_syslog_issue
+            return is_syslog_issue, avgCapDet, is_syslog_issue_ignore, is_user_err_ignore

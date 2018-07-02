@@ -46,12 +46,13 @@ class mainProgram:
         self.loadAT = config.loadDetails['ATFile']
         #SipAutoTesterObj=SipAutoTester.SipAutoTester(self.logPath)
         #self.logger.debug("SWMRF is Up and Running ")
+        self.loadModelFile = config.loadDetails['ModelFile']
 
     def checkSetupHealth(self):
 
         while True:
             time.sleep(3)
-            healthCheckObj=healthCheck.ProcessCheck()
+            healthCheckObj = healthCheck.ProcessCheck()
             if healthCheckObj.mrfHealthCheck() != 0:
                 self.logger.error("SWMRF is unreachable ")
                 sys.exit()
@@ -59,6 +60,7 @@ class mainProgram:
                 self.logger.debug("SWMRF is UP and Running ")
 
     def startSAT(self):
+
         SipAutoTesterObj = SipAutoTester.SipAutoTester(self.logPath)
         SipAutoTesterObj.prepareATcfg()
         SipAutoTesterObj.prepareMscConfig()
@@ -82,12 +84,11 @@ class mainProgram:
         threadProcess = threading.Thread(target=self.checkSetupHealth)
         threadProcess.setDaemon(True)
         threadProcess.start()
-        self.logger.debug("SWMRF is UP and Running ")
+        #self.logger.debug("SWMRF is UP and Running ")
 
     def topMrf(self):
 
         topProcessObject = topProcess.topProcess()
-        objMSConfig.copytopscript()
         topProcessObject.startTop()
         print "topMrf"
 
@@ -140,7 +141,7 @@ class mainProgram:
             child1.sendline('%s'%(self.mrfPassword))
             child1.expect(['#', pexpect.TIMEOUT, SSH_NEWKEY, '(?i)password', COMMAND_PROMPT, pexpect.EOF])
             #print("In scp 2....")
-        elif iii==3:
+        elif iii == 3:
             pass
 
         objtop = topProcess.topProcess()
@@ -148,8 +149,9 @@ class mainProgram:
 
         objrtpg = RTPGenerator.RTPGenerator()
         objrtpg.killRTPG()
+        objrtpg.transferpcap()
 
-        child1=pexpect.spawn("scp  %s@%s:/root/top.txt  %s"%(self.mrfUserName,self.mrfIp,self.logPath))
+        child1 = pexpect.spawn("scp  %s@%s:/root/top.txt  %s"%(self.mrfUserName, self.mrfIp, self.logPath))
         iii = child1.expect([pexpect.TIMEOUT, SSH_NEWKEY, '(?i)password', COMMAND_PROMPT, pexpect.EOF])
         if iii == 0:
             print "scp timeout"
@@ -160,7 +162,7 @@ class mainProgram:
             #print("In scp 1....")
         elif iii == 2:
             child1.sendline('%s'%(self.mrfPassword))
-            child1.expect(['#',pexpect.TIMEOUT, SSH_NEWKEY, '(?i)password', COMMAND_PROMPT, pexpect.EOF])
+            child1.expect(['#', pexpect.TIMEOUT, SSH_NEWKEY, '(?i)password', COMMAND_PROMPT, pexpect.EOF])
             #print("In scp 2....")
         elif iii == 3:
             pass
@@ -171,15 +173,30 @@ class mainProgram:
         # Copying the AT.cfg
         os.system("cp %s/%s %s" % (self.SATPath, self.loadAT, self.logPath))
 
+        # Copying Model File
+        os.system("cp %s/models.standard/%s %s" % (self.SATPath, self.loadModelFile, self.logPath))
+
+        # Copying Tool Logs
+        os.system("mkdir -p %s/tool_logs" %(self.logPath))
+        os.system("mv rtpg.cfg at_cpu_info.txt media_data.trace %s/tool_logs" %(self.logPath))
+        os.system("mv MscConfig.cfg mscLogFile.log mscErrorLogFile.log pdtrc.log ipstrc.log  %s/tool_logs"
+                  %(self.logPath))
+
         # Copying final verdict
         os.system("cp verdict.txt %s" % (self.logPath))
+
 
 if __name__ == '__main__':
 
     obj = mainProgram()
+    #obj.checkSetupHealthThread()
     objMSConfig.copytopscript()
     objMSConfig.setsyslog()
     obj.rtpgThread()
+    os.system("echo ' ' > verdict.txt")
+    os.system('scp -r /root/DV_Load_Python_Files/lmdb.csv /root/.')
+    objMSConfig.sutresetservice()
+    objMSConfig.checkmscores()
 
     def reRun(obj):
 
@@ -187,29 +204,24 @@ if __name__ == '__main__':
         obj.clearMrfLog()
         obj.topThread()
 
-        sleep_time = 5
-        while sleep_time <= 120:
-            #objMSConfig.sutresetservice()
+        sleep_time = 0
+        while sleep_time <= 90:
             time.sleep(sleep_time)
             curPorts = snmpobj.snmpget('cardstatCurrPortsActive.1')
-            curaudiodsputil = snmpobj.snmpget('dspstatMaxAudioDspUtilizationModeled.2')
-            if curPorts == "0" and curaudiodsputil == "0":
-                print "curActive ports are zero and DSP Util is zero... "
+            if curPorts == "0":
+                print "curActive ports are zero ... "
                 break
             else:
-                print "There are Active/Hanging ports or DSP Util is not zero ... waiting to get cleared. "
-                print curPorts + curaudiodsputil
+                print "There are " + curPorts + "Active in the SUT ..."
                 sleep_time = sleep_time + 30
-        if snmpobj.snmpget('cardstatCurrPortsActive.1') != "0" or \
-            snmpobj.snmpget('dspstatMaxAudioDspUtilizationModeled.2') != "0":
-            print "There are Active/Hanging ports or DSP Util is not zero ... Rebooting SUT "
-            objMSConfig.sutreboot()
-            reRun(obj)
+                print "There are Active/Hanging ports waiting to get cleared. Sleep " + sleep_time
 
-        curPorts = snmpobj.snmpget('cardstatCurrPortsActive.1')
-        if not curPorts == "0":
-            objMSConfig.sutreboot()
-            reRun(obj)
+        if snmpobj.snmpget('cardstatCurrPortsActive.1') != "0":
+
+            print "***ERROR There are Active/Hanging ports ... Hence terminating the load model"
+            #objMSConfig.sutreboot()
+            #reRun(obj)
+            exit(1)
 
         resultSAT = obj.startSAT()
         print "SAT Result = " + str(resultSAT)
@@ -221,6 +233,9 @@ if __name__ == '__main__':
 
     print "============= Load Execution Started... ================="
     reRun(obj)
+    statstime = int(snmpobj.snmpget('statInterval.0'))
+    print "Sleeping for " + str(statstime*60) + " seconds to collect logs"
+    time.sleep(statstime*60)
     obj.copyLogs()
     op = commands.getstatusoutput('cat verdict.txt')
     print op[1]
